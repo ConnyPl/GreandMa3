@@ -1,0 +1,498 @@
+-- ==========================================
+-- COLOR MATRIX - PURE RECIPE LAYOUT
+-- Metoda: Programmer -> Store Recipe
+-- Wersja: 2.3.2.0 (Poprawka "At Preset" - The Eureka Fix)
+-- ==========================================
+
+local function main()
+    -- 1. HARD RESET
+    _G.CP_Data = nil 
+    _G.CP_Data = {
+        Frozen = false,
+        RecordMode = false,
+        Groups = {},          
+        GroupList = {},       
+        CurrentState = {},    
+        PendingState = {}, 
+        Palettes = {}, 
+        SelectedTime = "0.5",
+        Config = {
+            LayoutId = 20,
+            FreezeLayoutId = 0,
+            CancelLayoutId = 0,
+            RecordLayoutId = 0,
+            TimeBtnIds = {},     
+            PaletteBtnIds = {}
+        }
+    }
+
+    Cmd('Blind On'); Cmd('ClearAll')
+    
+    local TIME_OPTIONS = {"0", "0.5", "1", "2", "4", "6", "10"} 
+
+    -- ==========================================
+    -- LOGIKA UI
+    -- ==========================================
+
+    function CP_UpdateUI()
+        local data = _G.CP_Data
+        if not data then return end
+        local layoutId = data.Config.LayoutId
+
+        for _, tVal in ipairs(TIME_OPTIONS) do
+            local elemId = data.Config.TimeBtnIds[tVal]
+            if elemId then
+                local isActive = (data.SelectedTime == tVal)
+                local app = isActive and "App_Btn_Active" or "App_Btn_Inactive"
+                Cmd('Set Layout '..layoutId..'.'..elemId..' Property "Appearance" "'..app..'"')
+            end
+        end
+        
+        local freezeElemId = data.Config.FreezeLayoutId
+        local cancelElemId = data.Config.CancelLayoutId
+        
+        if freezeElemId and cancelElemId and freezeElemId > 0 and cancelElemId > 0 then
+            if data.Frozen then
+                Cmd('Set Layout '..layoutId..'.'..freezeElemId..' Property "Appearance" "App_Freeze_Active"')
+                Cmd('Set Layout '..layoutId..'.'..cancelElemId..' Property "Appearance" "App_Cancel_Active"')
+            else
+                Cmd('Set Layout '..layoutId..'.'..freezeElemId..' Property "Appearance" "App_Freeze_Inactive"')
+                Cmd('Set Layout '..layoutId..'.'..cancelElemId..' Property "Appearance" "App_Cancel_Inactive"')
+            end
+        end
+
+        local recordElemId = data.Config.RecordLayoutId
+        if recordElemId and recordElemId > 0 then
+            local recApp = data.RecordMode and "App_Cancel_Active" or "App_Btn_Inactive"
+            Cmd('Set Layout '..layoutId..'.'..recordElemId..' Property "Appearance" "'..recApp..'"')
+        end
+    end
+
+    function CP_SetTime(val)
+        _G.CP_Data.SelectedTime = tostring(val)
+        CP_UpdateUI()
+        Printf("Time: " .. val .. "s")
+    end
+
+    local function ExecuteGroupChange(groupId, colorIdx)
+        local data = _G.CP_Data
+        local item = data.Groups[groupId][colorIdx]
+        if not item then return end
+        
+        local cmd = string.format('Goto Sequence %d Cue %d Fade %s', item.SeqId, item.CueId, data.SelectedTime)
+        Cmd(cmd)
+    end
+
+    local function RefreshLayoutRow(groupId)
+        local data = _G.CP_Data
+        local row = data.Groups[groupId]
+        if not row then return end
+
+        local activeIndex = data.CurrentState[groupId]
+        if data.Frozen and data.PendingState[groupId] then
+            activeIndex = data.PendingState[groupId]
+        end
+
+        local layoutId = data.Config.LayoutId
+        for colIdx, item in pairs(row) do
+            local isSelected = (colIdx == activeIndex)
+            local appName = isSelected and item.AppOn or item.AppOff
+            Cmd('Set Layout '..layoutId..'.'..item.LayoutId..' Property "Appearance" "'..appName..'"')
+        end
+    end
+
+    function CP_Click(groupId, colorIdx)
+        local data = _G.CP_Data
+        if data.Frozen then
+            data.PendingState[groupId] = colorIdx
+            RefreshLayoutRow(groupId)
+        else
+            data.CurrentState[groupId] = colorIdx
+            data.PendingState[groupId] = nil 
+            ExecuteGroupChange(groupId, colorIdx)
+            RefreshLayoutRow(groupId)
+        end
+    end
+
+    function CP_ClickAll(colorIdx)
+        local data = _G.CP_Data
+        for _, gId in ipairs(data.GroupList) do
+            if data.Frozen then
+                data.PendingState[gId] = colorIdx
+                RefreshLayoutRow(gId)
+            else
+                data.CurrentState[gId] = colorIdx
+                data.PendingState[gId] = nil
+                ExecuteGroupChange(gId, colorIdx)
+                RefreshLayoutRow(gId)
+            end
+        end
+    end
+
+    function CP_ToggleFreeze()
+        local data = _G.CP_Data
+        if data.Frozen then
+            for _, gId in ipairs(data.GroupList) do
+                local pendingCol = data.PendingState[gId]
+                if pendingCol then
+                    data.CurrentState[gId] = pendingCol
+                    ExecuteGroupChange(gId, pendingCol) 
+                end
+            end
+            data.PendingState = {}
+            data.Frozen = false
+        else
+            data.Frozen = true
+        end
+        CP_UpdateUI()
+    end
+
+    function CP_Cancel()
+        local data = _G.CP_Data
+        data.PendingState = {}
+        data.Frozen = false
+        for _, gId in ipairs(data.GroupList) do
+            RefreshLayoutRow(gId)
+        end
+        CP_UpdateUI()
+    end
+
+    function CP_OffAll()
+        local data = _G.CP_Data
+        for _, gId in ipairs(data.GroupList) do
+            local firstItem = data.Groups[gId]
+            if firstItem then
+                local firstCue = next(firstItem)
+                if firstCue then
+                    Cmd('Off Sequence '..firstItem[firstCue].SeqId)
+                end
+            end
+        end
+        data.CurrentState = {}
+        data.PendingState = {}
+        for _, gId in ipairs(data.GroupList) do
+            RefreshLayoutRow(gId)
+        end
+        Printf("Wszystkie sekwencje kolorów wyłączone.")
+    end
+
+    function CP_ToggleRecord()
+        _G.CP_Data.RecordMode = not _G.CP_Data.RecordMode
+        CP_UpdateUI()
+    end
+
+    function CP_PaletteClick(idx)
+        local data = _G.CP_Data
+        local layoutId = data.Config.LayoutId
+
+        if data.RecordMode then
+            data.Palettes[idx] = {}
+            for gId, colorIdx in pairs(data.CurrentState) do
+                data.Palettes[idx][gId] = colorIdx
+            end
+            data.RecordMode = false
+            CP_UpdateUI()
+            Cmd('Set Layout '..layoutId..'.'..data.Config.PaletteBtnIds[idx]..' Property "Appearance" "App_Btn_Active"')
+            Printf("Zapisano Paletę " .. idx)
+        else
+            local pal = data.Palettes[idx]
+            if not pal or not next(pal) then 
+                Printf("Paleta " .. idx .. " jest pusta!")
+                return 
+            end
+
+            if data.Frozen then
+                for gId, colorIdx in pairs(pal) do
+                    data.PendingState[gId] = colorIdx
+                    RefreshLayoutRow(gId)
+                end
+                Printf("Załadowano Paletę " .. idx .. " (Freeze)")
+            else
+                for gId, colorIdx in pairs(pal) do
+                    data.CurrentState[gId] = colorIdx
+                    ExecuteGroupChange(gId, colorIdx)
+                    RefreshLayoutRow(gId)
+                end
+                Printf("Wywołano Paletę " .. idx)
+            end
+        end
+    end
+
+    -- ==========================================
+    -- SETUP
+    -- ==========================================
+    
+    local gels = {
+        "White","Red","Orange","Yellow","Fern Green","Green","Sea Green",
+        "Cyan","Lavender","Blue","Violet","Magenta","Pink"
+    }
+    local gelColors = {
+        ["White"]       = "D0D0D0FF", ["Red"]         = "FF0000FF",
+        ["Orange"]      = "FF8000FF", ["Yellow"]      = "FFFF00FF",
+        ["Fern Green"]  = "008040FF", ["Green"]       = "00FF00FF",
+        ["Sea Green"]   = "00FF80FF", ["Cyan"]        = "00FFFFFF",
+        ["Lavender"]    = "C080FFFF", ["Blue"]        = "0000FFFF",
+        ["Violet"]      = "8000FFFF", ["Magenta"]     = "FF00FFFF",
+        ["Pink"]        = "FF80C0FF", ["Roscosun 1/4 CTO"] = "FFC896FF",
+        ["Blackout"]    = "000000FF" 
+    }
+
+    local function createAppearances(name, hex)
+        if not hex or #hex < 8 then return nil, nil end
+        local r = tonumber(hex:sub(1,2),16) or 255
+        local g = tonumber(hex:sub(3,4),16) or 255
+        local b = tonumber(hex:sub(5,6),16) or 255
+        local safeName = name:gsub("%s+", "_")
+        local appOn, appOff = "App_"..safeName.."_ON", "App_"..safeName.."_OFF"
+        
+        if name == "Blackout" then
+            Cmd('Store Appearance "'..appOn..'" /o /nc'); Cmd('Set Appearance "'..appOn..'" Property "ImageR" 0 "ImageG" 0 "ImageB" 0 "ImageAlpha" 200')
+            Cmd('Store Appearance "'..appOff..'" /o /nc'); Cmd('Set Appearance "'..appOff..'" Property "ImageR" 20 "ImageG" 20 "ImageB" 20 "ImageAlpha" 100')
+        else
+            Cmd('Store Appearance "'..appOn..'" /o /nc'); Cmd('Set Appearance "'..appOn..'" Property "ImageR" '..r..' "ImageG" '..g..' "ImageB" '..b..' "ImageAlpha" 200')
+            Cmd('Store Appearance "'..appOff..'" /o /nc'); Cmd('Set Appearance "'..appOff..'" Property "ImageR" '..r..' "ImageG" '..g..' "ImageB" '..b..' "ImageAlpha" 20')
+        end
+        return appOn, appOff
+    end
+
+    local appMap = {}
+    for name, hex in pairs(gelColors) do
+        local on, off = createAppearances(name, hex)
+        appMap[name] = {on = on, off = off}
+    end
+    
+    Cmd('Store Appearance "App_Freeze_Inactive" /o /nc'); Cmd('Set Appearance "App_Freeze_Inactive" Property "ImageR" 60 "ImageG" 60 "ImageB" 60 "ImageAlpha" 100')
+    Cmd('Store Appearance "App_Freeze_Active" /o /nc'); Cmd('Set Appearance "App_Freeze_Active" Property "ImageR" 0 "ImageG" 200 "ImageB" 0 "ImageAlpha" 255')
+    Cmd('Store Appearance "App_Cancel_Inactive" /o /nc'); Cmd('Set Appearance "App_Cancel_Inactive" Property "ImageR" 60 "ImageG" 60 "ImageB" 60 "ImageAlpha" 100')
+    Cmd('Store Appearance "App_Cancel_Active" /o /nc'); Cmd('Set Appearance "App_Cancel_Active" Property "ImageR" 200 "ImageG" 0 "ImageB" 0 "ImageAlpha" 255')
+    Cmd('Store Appearance "App_Btn_Active" /o /nc'); Cmd('Set Appearance "App_Btn_Active" Property "ImageR" 255 "ImageG" 255 "ImageB" 0 "ImageAlpha" 150')
+    Cmd('Store Appearance "App_Btn_Inactive" /o /nc'); Cmd('Set Appearance "App_Btn_Inactive" Property "ImageR" 40 "ImageG" 40 "ImageB" 40 "ImageAlpha" 100')
+
+    local firstGroup = tonumber(TextInput("Podaj numer pierwszej grupy:"))
+    local lastGroup  = tonumber(TextInput("Podaj numer ostatniej grupy:"))
+    if not firstGroup or not lastGroup or firstGroup > lastGroup then Cmd('Blind Off'); return end
+
+    -- TWORZENIE PRESETÓW: Wymuszamy fizyczne przeliczenie danych Global
+    Cmd('ClearAll')
+    for g = firstGroup, lastGroup do
+        Cmd('Group '..g)
+    end
+
+    for i, gelName in ipairs(gels) do
+        Cmd('At Gel "MA"."' .. gelName .. '"')
+        Cmd('Store Preset 4.' .. i .. ' /Global /o /nc'); Cmd('Label Preset 4.' .. i .. ' "Global ' .. gelName .. '"')
+    end
+    
+    Cmd('At Gel "Cinegel"."Roscosun 1/4 CTO"')
+    Cmd('Store Preset 4.14 /Global /o /nc'); Cmd('Label Preset 4.14 "Global Roscosun 1/4 CTO"')
+    
+    Cmd('Attribute "ColorRGB_R" At 0; Attribute "ColorRGB_G" At 0; Attribute "ColorRGB_B" At 0')
+    Cmd('Store Preset 4.15 /Global /o /nc'); Cmd('Label Preset 4.15 "Global Blackout"')
+    Cmd('ClearAll')
+
+    local baseMatricksId = 100
+    Cmd('Store MAtricks '..baseMatricksId..' "CP_Base" /o /nc')
+
+    local layoutId = 20
+    Cmd('Delete Layout '..layoutId..' /nc /o'); Cmd('Store Layout '..layoutId..' "Color Matrix" /o /nc')
+
+    local layoutElemId = 1
+    local cellWidth, cellHeight = 200, 100
+    local startX, startY = -1000, 1000
+    local macroId = 501
+    local createdSeqIds = {}; local createdMacros = {}; local rowCounter = 0
+    
+    local function appendToLayout(objType, objId, posX, posY, label, defaultApp, w, h)
+        local width = w or cellWidth
+        local height = h or cellHeight
+        
+        if objType == "Label" then
+            Cmd('Store Layout '..layoutId..'.'..layoutElemId..' /o /nc')
+            Cmd('Set Layout '..layoutId..'.'..layoutElemId..' Property "Name" "'..label..'"')
+        else
+            Cmd('Assign '..objType..' '..objId..' At Layout '..layoutId)
+        end
+        
+        Cmd('Set Layout '..layoutId..'.'..layoutElemId..' Property "PosX" '..posX..' "PosY" '..posY..' "Width" '..width..' "Height" '..height)
+        
+        if defaultApp then 
+            Cmd('Set Layout '..layoutId..'.'..layoutElemId..' Property "Appearance" "'..defaultApp..'"') 
+        end
+        
+        local assignedId = layoutElemId
+        layoutElemId = layoutElemId + 1
+        return assignedId
+    end
+
+    for g = firstGroup, lastGroup do
+        _G.CP_Data.Groups[g] = {}
+        table.insert(_G.CP_Data.GroupList, g)
+        
+        local seqId = 900 + g
+        local groupHandle = DataPool().Groups[g]
+        local groupName = groupHandle and (groupHandle.Name or ("G " .. g)) or ("G " .. g)
+
+        Cmd('Delete Sequence ' .. seqId .. ' /nc /o'); Cmd('Store Sequence ' .. seqId .. ' /o /nc')
+        Cmd('Label Sequence ' .. seqId .. ' "Colors_' .. g .. '"')
+        Cmd('Set Sequence '..seqId..' Property "OffWhenOverridden" "Yes"')
+        table.insert(createdSeqIds, seqId)
+
+        local currentY = startY - (rowCounter * cellHeight)
+        appendToLayout("Group", g, (startX - cellWidth), currentY, groupName, nil)
+
+        local function createColorTile(idx, name, type)
+            local mId = macroId
+            local presetId = idx
+            local cueId = idx
+            
+            if type == "CTO" then presetId = 14; cueId = 98 end
+            if type == "BLACK" then presetId = 15; cueId = 99 end
+            
+            -- TWORZENIE PUSTEGO CUE
+            Cmd('Store Sequence '..seqId..' Cue '..cueId..' /o /nc')
+            Cmd('Label Cue ' .. cueId .. ' Sequence '..seqId..' "' .. name .. '"')
+            
+            -- WPROWADZANIE SKŁADNIKÓW DO PROGRAMMERA Z MAGIĄ "At Preset"
+            Cmd('ClearAll')
+            Cmd('Group '..g)
+            Cmd('At Preset 4.'..presetId) -- <--- TUTAJ BYŁ BŁĄD, TERAZ JEST IDEALNIE
+            Cmd('MAtricks '..baseMatricksId)
+            
+            -- ZAPIS DO RECEPTURY Z PROGRAMMERA
+            Cmd('Store Sequence '..seqId..' Cue '..cueId..' Recipe 1 /o /nc')
+            Cmd('ClearAll')
+            
+            local appNameOn = appMap[name].on
+            Cmd('Set Sequence '..seqId..' Cue '..cueId..' Property "Appearance" "'..appNameOn..'"')
+
+            Cmd('Store Macro ' .. mId .. ' /o /nc'); Cmd('Label Macro ' .. mId .. ' "' .. name .. ' ' .. g .. '"')
+            Cmd('Insert Macro ' .. mId .. '.1'); Cmd('Set Macro '..mId..'.1 Property "Command" "Lua \'CP_Click('..g..', '..cueId..')\'"')
+            
+            local posX = startX + ((idx-1) * cellWidth)
+            if type == "CTO" then posX = startX + (#gels * cellWidth) end
+            if type == "BLACK" then posX = startX + ((#gels + 1) * cellWidth) end
+            
+            local myLayoutId = appendToLayout("Macro", mId, posX, currentY, name, appMap[name].off)
+            
+            _G.CP_Data.Groups[g][cueId] = {
+                SeqId = seqId, CueId = cueId, LayoutId = myLayoutId,
+                AppOn = appMap[name].on, AppOff = appMap[name].off, Name = name
+            }
+            table.insert(createdMacros, {id=mId})
+            macroId = macroId + 1
+        end
+
+        for i, gelName in ipairs(gels) do createColorTile(i, gelName, "NORMAL") end
+        createColorTile(98, "Roscosun 1/4 CTO", "CTO")
+        createColorTile(99, "Blackout", "BLACK")
+        
+        -- GOTOWANIE 
+        Cmd('Cook Sequence '..seqId..' /Merge')
+        
+        rowCounter = rowCounter + 1
+    end
+
+    -- ALL GROUPS ROW
+    local currentY = startY - (rowCounter * cellHeight) - 50
+    appendToLayout("Label", nil, (startX - cellWidth), currentY, "ALL GROUPS", nil)
+    
+    local allColors = {}; for i, c in ipairs(gels) do table.insert(allColors, {idx=i, name=c, type="NORMAL"}) end
+    table.insert(allColors, {idx=98, name="Roscosun 1/4 CTO", type="CTO"})
+    table.insert(allColors, {idx=99, name="Blackout", type="BLACK"})
+
+    for i, col in ipairs(allColors) do
+        local mId = macroId
+        Cmd('Store Macro ' .. mId .. ' /o /nc'); Cmd('Label Macro ' .. mId .. ' "ALL ' .. col.name .. '"')
+        Cmd('Insert Macro ' .. mId .. '.1'); Cmd('Set Macro '..mId..'.1 Property "Command" "Lua \'CP_ClickAll('..col.idx..')\'"')
+        
+        local posX = startX + ((i-1) * cellWidth)
+        if col.type == "CTO" then posX = startX + (#gels * cellWidth) end
+        if col.type == "BLACK" then posX = startX + ((#gels + 1) * cellWidth) end
+        
+        appendToLayout("Macro", mId, posX, currentY, col.name, appMap[col.name].on)
+        table.insert(createdMacros, {id=mId})
+        macroId = macroId + 1
+    end
+    
+    -- === UI: CONTROLS ===
+    currentY = currentY - cellHeight - 50
+    local ctrlY = currentY 
+    appendToLayout("Label", nil, startX - cellWidth, ctrlY, "CONTROLS", nil)
+    
+    for i, tVal in ipairs(TIME_OPTIONS) do
+        local mId = macroId
+        Cmd('Store Macro '..mId..' /o /nc'); Cmd('Label Macro '..mId..' "Time '..tVal..'s"')
+        Cmd('Insert Macro '..mId..'.1'); Cmd('Set Macro '..mId..'.1 Property "Command" "Lua \'CP_SetTime('..tVal..')\'"')
+        
+        local app = (tVal == "0.5") and "App_Btn_Active" or "App_Btn_Inactive"
+        local posX = startX + ((i-1) * cellWidth)
+        local elemId = appendToLayout("Macro", mId, posX, ctrlY, tVal.."s", app)
+        _G.CP_Data.Config.TimeBtnIds[tVal] = elemId
+        table.insert(createdMacros, {id=mId})
+        macroId = macroId + 1
+    end
+
+    local ctrlOffset = #TIME_OPTIONS + 1
+    
+    local freezeX = startX + (ctrlOffset * cellWidth) 
+    local freezeMacroId = macroId
+    Cmd('Store Macro '..freezeMacroId..' /o /nc'); Cmd('Label Macro '..freezeMacroId..' "FREEZE / COMMIT"')
+    Cmd('Insert Macro '..freezeMacroId..'.1'); Cmd('Set Macro '..freezeMacroId..'.1 Property "Command" "Lua \'CP_ToggleFreeze()\'"')
+    _G.CP_Data.Config.FreezeLayoutId = appendToLayout("Macro", freezeMacroId, freezeX, ctrlY, "FREEZE", "App_Freeze_Inactive")
+    table.insert(createdMacros, {id=freezeMacroId}); macroId = macroId + 1
+
+    local cancelX = startX + ((ctrlOffset + 1) * cellWidth)
+    local cancelMacroId = macroId
+    Cmd('Store Macro '..cancelMacroId..' /o /nc'); Cmd('Label Macro '..cancelMacroId..' "CANCEL"')
+    Cmd('Insert Macro '..cancelMacroId..'.1'); Cmd('Set Macro '..cancelMacroId..'.1 Property "Command" "Lua \'CP_Cancel()\'"')
+    _G.CP_Data.Config.CancelLayoutId = appendToLayout("Macro", cancelMacroId, cancelX, ctrlY, "CANCEL", "App_Cancel_Inactive")
+    table.insert(createdMacros, {id=cancelMacroId}); macroId = macroId + 1
+
+    local offAllX = startX + ((ctrlOffset + 2) * cellWidth)
+    local offAllMacroId = macroId
+    Cmd('Store Macro '..offAllMacroId..' /o /nc'); Cmd('Label Macro '..offAllMacroId..' "OFF ALL"')
+    Cmd('Insert Macro '..offAllMacroId..'.1'); Cmd('Set Macro '..offAllMacroId..'.1 Property "Command" "Lua \'CP_OffAll()\'"')
+    appendToLayout("Macro", offAllMacroId, offAllX, ctrlY, "OFF ALL", "App_Btn_Inactive")
+    table.insert(createdMacros, {id=offAllMacroId}); macroId = macroId + 1
+
+    -- === UI: PALETTES ===
+    currentY = currentY - cellHeight - 50
+    local palY = currentY
+    appendToLayout("Label", nil, startX - cellWidth, palY, "PALETTES", nil)
+
+    local recordMacroId = macroId
+    Cmd('Store Macro '..recordMacroId..' /o /nc'); Cmd('Label Macro '..recordMacroId..' "RECORD"')
+    Cmd('Insert Macro '..recordMacroId..'.1'); Cmd('Set Macro '..recordMacroId..'.1 Property "Command" "Lua \'CP_ToggleRecord()\'"')
+    _G.CP_Data.Config.RecordLayoutId = appendToLayout("Macro", recordMacroId, startX, palY, "RECORD", "App_Btn_Inactive")
+    table.insert(createdMacros, {id=recordMacroId}); macroId = macroId + 1
+
+    local NUM_PALETTES = 5
+    for i = 1, NUM_PALETTES do
+        local pId = macroId
+        Cmd('Store Macro '..pId..' /o /nc'); Cmd('Label Macro '..pId..' "PALETTE '..i..'"')
+        Cmd('Insert Macro '..pId..'.1'); Cmd('Set Macro '..pId..'.1 Property "Command" "Lua \'CP_PaletteClick('..i..')\'"')
+        local posX = startX + ((i + 1) * cellWidth)
+        local pElemId = appendToLayout("Macro", pId, posX, palY, "PAL " .. i, "App_Btn_Inactive")
+        _G.CP_Data.Config.PaletteBtnIds[i] = pElemId
+        table.insert(createdMacros, {id=pId}); macroId = macroId + 1
+    end
+
+    Cmd('Store Macro 998 /o /nc'); Cmd('Label Macro 998 "Cleanup Color Picker"')
+    local step = 1
+    Cmd('Insert Macro 998.'..step); Cmd('Set Macro 998.'..step..' Property "Command" "Delete Layout '..layoutId..' /nc /o"'); step=step+1
+    Cmd('Insert Macro 998.'..step); Cmd('Set Macro 998.'..step..' Property "Command" "Delete Appearance App_* /nc /o"'); step=step+1
+    for _, seqId in ipairs(createdSeqIds) do
+        Cmd('Insert Macro 998.'..step); Cmd('Set Macro 998.'..step..' Property "Command" "Delete Sequence '..seqId..' /nc /o"'); step=step+1
+    end
+    for _, m in ipairs(createdMacros) do
+        Cmd('Insert Macro 998.'..step); Cmd('Set Macro 998.'..step..' Property "Command" "Delete Macro '..m.id..' /nc /o"'); step=step+1
+    end
+    Cmd('Insert Macro 998.'..step); Cmd('Set Macro 998.'..step..' Property "Command" "Delete MAtricks '..baseMatricksId..' /nc /o"'); step=step+1
+    Cmd('Insert Macro 998.'..step); Cmd('Set Macro 998.'..step..' Property "Command" "Delete Macro 998"'); step=step+1
+
+    Cmd('Blind Off')
+    CP_UpdateUI()
+    Printf("Mamy to! At Preset zaaplikowało wartości, scena powinna swiecic.")
+end
+
+return main
