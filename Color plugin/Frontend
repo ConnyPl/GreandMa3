@@ -1,0 +1,66 @@
+_G.CP_Frontend = {}
+
+_G.CP_Frontend.CreateAppearances = function()
+    local Config = _G.CP_Config
+    local appMap = {}
+    
+    for name, hex in pairs(Config.GelColors) do
+        local r, g, b = tonumber(hex:sub(1,2),16) or 255, tonumber(hex:sub(3,4),16) or 255, tonumber(hex:sub(5,6),16) or 255
+        local safeName = name:gsub("%s+", "_")
+        local appOn, appOff = "App_"..safeName.."_ON", "App_"..safeName.."_OFF"
+        
+        Cmd('Store Appearance "'..appOn..'" /o /nc'); Cmd('Store Appearance "'..appOff..'" /o /nc')
+        if name == "Blackout" then
+            Cmd('Set Appearance "'..appOn..'" Property "ImageR" 0 "ImageG" 0 "ImageB" 0 "ImageAlpha" 200')
+            Cmd('Set Appearance "'..appOff..'" Property "ImageR" 20 "ImageG" 20 "ImageB" 20 "ImageAlpha" 100')
+        else
+            Cmd('Set Appearance "'..appOn..'" Property "ImageR" '..r..' "ImageG" '..g..' "ImageB" '..b..' "ImageAlpha" 200')
+            Cmd('Set Appearance "'..appOff..'" Property "ImageR" '..r..' "ImageG" '..g..' "ImageB" '..b..' "ImageAlpha" 20')
+        end
+        appMap[name] = {on = appOn, off = appOff}
+    end
+    
+    local function quickApp(n, r, g, b, a)
+        Cmd('Store Appearance "'..n..'" /o /nc')
+        Cmd('Set Appearance "'..n..'" Property "ImageR" '..r..' "ImageG" '..g..' "ImageB" '..b..' "ImageAlpha" '..a)
+    end
+    
+    quickApp("App_Freeze_Inactive", 60, 60, 60, 100)
+    quickApp("App_Freeze_Active", 0, 200, 0, 255)
+    quickApp("App_Cancel_Inactive", 60, 60, 60, 100)
+    quickApp("App_Cancel_Active", 200, 0, 0, 255)
+    quickApp("App_Btn_Active", 255, 255, 0, 150)
+    quickApp("App_Btn_Inactive", 40, 40, 40, 100)
+    
+    -- Tworzenie całkowicie przezroczystego wyglądu (np. dla niewidzialnych etykiet)
+    Cmd('Store Appearance "App_Invisible" /o /nc')
+    Cmd('Set Appearance "App_Invisible" Property "BackAlpha" 0 "ImageAlpha" 0 "BarAlpha" 0')
+    
+    return appMap
+end
+
+_G.CP_Frontend.InitLayout = function()
+    Cmd('Delete Layout '.._G.CP_Config.LayoutId..' /nc /o')
+    Cmd('Store Layout '.._G.CP_Config.LayoutId..' "Color Matrix" /o /nc')
+    return 1
+end
+
+_G.CP_Frontend.AppendToLayout = function(layoutElemId, objType, objId, posX, posY, label, defaultApp, w, h)
+    local Config = _G.CP_Config
+    local width, height = w or Config.CellWidth, h or Config.CellHeight
+    local lid = Config.LayoutId
+    
+    if objType == "Label" then
+        Cmd('Store Layout '..lid..'.'..layoutElemId..' /o /nc')
+        Cmd('Set Layout '..lid..'.'..layoutElemId..' Property "Name" "'..label..'"')
+    else 
+        Cmd('Assign '..objType..' '..objId..' At Layout '..lid) 
+    end
+    
+    Cmd('Set Layout '..lid..'.'..layoutElemId..' Property "PosX" '..posX..' "PosY" '..posY..' "Width" '..width..' "Height" '..height)
+    if defaultApp then 
+        Cmd('Set Layout '..lid..'.'..layoutElemId..' Property "Appearance" "'..defaultApp..'"') 
+    end
+    
+    return layoutElemId + 1, layoutElemId
+end
