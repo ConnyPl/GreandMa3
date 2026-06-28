@@ -1,0 +1,30 @@
+_G.CP_Config = {
+    LayoutId = 20,
+    BaseMatricksId = 100,
+    CellWidth = 200,
+    CellHeight = 100,
+    StartX = -1000,
+    StartY = 1000,
+    TimeOptions = {"0", "0.5", "1", "2", "4", "User"},
+    WingsOptions = {"None", "2", "User"},
+    -- Definicja wierszy FX (ID wirtualnej grupy, Preset docelowy, Nazwa)
+    FXRows = {
+        { Id = 9951, TargetPreset = 51, Name = "High FX" },
+        { Id = 9952, TargetPreset = 52, Name = "Low FX" },
+        { Id = 9953, TargetPreset = 53, Name = "Mid FX" }
+    },
+    Gels = {
+        "White","Red","Orange","Yellow","Fern Green","Green","Sea Green",
+        "Cyan","Lavender","Blue","Violet","Magenta","Pink"
+    },
+    GelColors = {
+        ["White"]       = "D0D0D0FF", ["Red"]         = "FF0000FF",
+        ["Orange"]      = "FF8000FF", ["Yellow"]      = "FFFF00FF",
+        ["Fern Green"]  = "008040FF", ["Green"]       = "00FF00FF",
+        ["Sea Green"]   = "00FF80FF", ["Cyan"]        = "00FFFFFF",
+        ["Lavender"]    = "C080FFFF", ["Blue"]        = "0000FFFF",
+        ["Violet"]      = "8000FFFF", ["Magenta"]     = "FF00FFFF",
+        ["Pink"]        = "FF80C0FF", ["Roscosun 1/4 CTO"] = "FFC896FF",
+        ["Blackout"]    = "000000FF" 
+    }
+}

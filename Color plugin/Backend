@@ -1,0 +1,32 @@
+_G.CP_Backend = {}
+
+_G.CP_Backend.CreatePresets = function(firstGroup, lastGroup)
+    local Config = _G.CP_Config
+    Cmd('ClearAll')
+    for g = firstGroup, lastGroup do Cmd('Group '..g) end
+    for i, gelName in ipairs(Config.Gels) do
+        Cmd('At Gel "MA"."' .. gelName .. '"')
+        Cmd('Store Preset 4.' .. i .. ' /Global /o /nc'); Cmd('Label Preset 4.' .. i .. ' "Global ' .. gelName .. '"')
+    end
+    Cmd('At Gel "Cinegel"."Roscosun 1/4 CTO"'); Cmd('Store Preset 4.14 /Global /o /nc'); Cmd('Label Preset 4.14 "Global CTO"')
+    Cmd('Attribute "ColorRGB_R" At 0; Attribute "ColorRGB_G" At 0; Attribute "ColorRGB_B" At 0')
+    Cmd('Store Preset 4.15 /Global /o /nc'); Cmd('Label Preset 4.15 "Global Blackout"'); Cmd('ClearAll')
+    Cmd('Store MAtricks '..Config.BaseMatricksId..' "CP_Base" /o /nc')
+    Cmd('Set MAtricks '..Config.BaseMatricksId..' Property "FadeFromX" 0 "FadeFromY" 0 "DelayFromX" 0 "DelayFromY" 0')
+end
+
+_G.CP_Backend.CreateMacro = function(mId, label, luaCommand)
+    Cmd('Store Macro ' .. mId .. ' /o /nc'); Cmd('Label Macro ' .. mId .. ' "' .. label .. '"')
+    Cmd('Insert Macro ' .. mId .. '.1'); Cmd('Set Macro '..mId..'.1 Property "Command" "Lua \''..luaCommand..'\'"')
+end
+
+_G.CP_Backend.CreateCleanupMacro = function(createdSeqIds, createdMacros)
+    local Config = _G.CP_Config
+    Cmd('Store Macro 998 /o /nc'); Cmd('Label Macro 998 "Cleanup Color Picker"')
+    local step = 1
+    local function addStep(cmdStr) Cmd('Insert Macro 998.'..step); Cmd('Set Macro 998.'..step..' Property "Command" "'..cmdStr..'"'); step=step+1 end
+    addStep("Delete Layout "..Config.LayoutId.." /nc /o"); addStep("Delete Appearance App_* /nc /o")
+    for _, seqId in ipairs(createdSeqIds) do addStep("Delete Sequence "..seqId.." /nc /o") end
+    for _, mId in ipairs(createdMacros) do addStep("Delete Macro "..mId.." /nc /o") end
+    addStep("Delete MAtricks "..Config.BaseMatricksId.." /nc /o"); addStep("Delete Macro 998")
+end

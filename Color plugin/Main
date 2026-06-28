@@ -1,0 +1,239 @@
+local function main()
+    local Config, Runtime, Frontend, Backend = _G.CP_Config, _G.CP_Runtime, _G.CP_Frontend, _G.CP_Backend
+    Cmd('Blind On'); Cmd('ClearAll'); Runtime.InitGlobalState()
+    
+    local firstGroup = tonumber(TextInput("Podaj numer pierwszej grupy:"))
+    local lastGroup  = tonumber(TextInput("Podaj numer ostatniej grupy:"))
+    if not firstGroup or not lastGroup or firstGroup > lastGroup then Cmd('Blind Off'); return end
+
+    local appMap = Frontend.CreateAppearances()
+    Backend.CreatePresets(firstGroup, lastGroup)
+    local layoutElemId = Frontend.InitLayout()
+    local macroId, createdSeqIds, createdMacros, rowCounter = 501, {}, {}, 0
+
+    for g = firstGroup, lastGroup do
+        _G.CP_Data.Groups[g] = {}; table.insert(_G.CP_Data.GroupList, g)
+        local seqId = 900 + g
+        local groupHandle = DataPool().Groups[g]
+        local groupName = groupHandle and (groupHandle.Name or ("G " .. g)) or ("G " .. g)
+
+        Cmd('Delete Sequence ' .. seqId .. ' /nc /o'); Cmd('Store Sequence ' .. seqId .. ' /o /nc')
+        Cmd('Label Sequence ' .. seqId .. ' "Colors_' .. g .. '"')
+        Cmd('Set Sequence '..seqId..' Property "OffWhenOverridden" "Yes" "CueRelease" "No" "UseExecutorTime" "No"')
+        table.insert(createdSeqIds, seqId)
+
+        local currentY = Config.StartY - (rowCounter * Config.CellHeight)
+        
+        -- Bazowy obiekt Grupy na początku wiersza
+        layoutElemId = Frontend.AppendToLayout(layoutElemId, "Group", g, (Config.StartX - Config.CellWidth), currentY, groupName, nil)
+
+        local function BuildTile(idx, name, typeCode)
+            local mId, presetId, cueId = macroId, idx, idx
+            if typeCode == "CTO" then presetId = 14; cueId = 98 end
+            if typeCode == "BLACK" then presetId = 15; cueId = 99 end
+            
+            Cmd('Store Sequence '..seqId..' Cue '..cueId..' /o /nc')
+            Cmd('Label Cue ' .. cueId .. ' Sequence '..seqId..' "' .. name .. '"')
+            Cmd('Assign Group '..g..' At Sequence '..seqId..' Cue '..cueId..' Part 0.1')
+            Cmd('Assign Preset 4.'..presetId..' At Sequence '..seqId..' Cue '..cueId..' Part 0.1')
+            Cmd('Assign MAtricks '..Config.BaseMatricksId..' At Sequence '..seqId..' Cue '..cueId..' Part 0.1')
+            Cmd('Set Sequence '..seqId..' Cue '..cueId..' Property "Appearance" "'..appMap[name].on..'"')
+            
+            Backend.CreateMacro(mId, name .. ' ' .. g, 'CP_Click('..g..', '..cueId..')')
+            table.insert(createdMacros, mId)
+            
+            local tilePosX = Config.StartX + ((idx-1) * Config.CellWidth)
+            if typeCode == "CTO" then tilePosX = Config.StartX + (#Config.Gels * Config.CellWidth)
+            elseif typeCode == "BLACK" then tilePosX = Config.StartX + ((#Config.Gels + 1) * Config.CellWidth) end
+            
+            local myLayoutId
+            layoutElemId, myLayoutId = Frontend.AppendToLayout(layoutElemId, "Macro", mId, tilePosX, currentY, name, appMap[name].off)
+            _G.CP_Data.Groups[g][cueId] = {SeqId = seqId, CueId = cueId, LayoutId = myLayoutId, AppOn = appMap[name].on, AppOff = appMap[name].off, Name = name}
+            macroId = macroId + 1
+        end
+
+        for i, gelName in ipairs(Config.Gels) do BuildTile(i, gelName, "NORMAL") end
+        BuildTile(98, "Roscosun 1/4 CTO", "CTO"); BuildTile(99, "Blackout", "BLACK")
+        Cmd('Cook Sequence '..seqId..' /Merge'); rowCounter = rowCounter + 1
+    end
+
+    -- ==========================================
+    -- Wiersze dla presetów FX
+    -- ==========================================
+    for _, fx in ipairs(Config.FXRows) do
+        local fxId = fx.Id
+        _G.CP_Data.Groups[fxId] = {} 
+        table.insert(_G.CP_Data.GroupList, fxId)
+
+        local currentY = Config.StartY - (rowCounter * Config.CellHeight)
+        
+        -- Etykieta wiersza na początku
+        layoutElemId = Frontend.AppendToLayout(layoutElemId, "Label", 0, (Config.StartX - Config.CellWidth), currentY, fx.Name, nil)
+
+        local function BuildFXTile(idx, name, typeCode)
+            local mId = macroId
+            local sourcePresetId = idx
+            
+            if typeCode == "CTO" then sourcePresetId = 14 end
+            if typeCode == "BLACK" then sourcePresetId = 15 end
+            
+            Backend.CreateMacro(mId, name .. ' ' .. fx.Name, 'CP_Click('..fxId..', '..idx..')')
+            table.insert(createdMacros, mId)
+            
+            local tilePosX = Config.StartX + ((idx-1) * Config.CellWidth)
+            if typeCode == "CTO" then tilePosX = Config.StartX + (#Config.Gels * Config.CellWidth)
+            elseif typeCode == "BLACK" then tilePosX = Config.StartX + ((#Config.Gels + 1) * Config.CellWidth) end
+            
+            local myLayoutId
+            layoutElemId, myLayoutId = Frontend.AppendToLayout(layoutElemId, "Macro", mId, tilePosX, currentY, name, appMap[name].off)
+            
+            _G.CP_Data.Groups[fxId][idx] = { 
+                LayoutId = myLayoutId, AppOn = appMap[name].on, AppOff = appMap[name].off, 
+                SourcePreset = sourcePresetId, Name = name 
+            }
+            macroId = macroId + 1
+        end
+
+        for i, gelName in ipairs(Config.Gels) do BuildFXTile(i, gelName, "NORMAL") end
+        BuildFXTile(98, "Roscosun 1/4 CTO", "CTO")
+        BuildFXTile(99, "Blackout", "BLACK")
+        
+        rowCounter = rowCounter + 1
+    end
+
+    -- UI: ALL GROUPS
+    local currentY = Config.StartY - (rowCounter * Config.CellHeight) - 50
+    local posX = Config.StartX
+    
+    for i, gelName in ipairs(Config.Gels) do
+        Backend.CreateMacro(macroId, "ALL " .. gelName, "CP_ClickAll("..i..")")
+        layoutElemId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, gelName, appMap[gelName].on)
+        table.insert(createdMacros, macroId); macroId = macroId + 1
+        posX = posX + Config.CellWidth
+    end
+    
+    Backend.CreateMacro(macroId, "ALL CTO", "CP_ClickAll(98)")
+    layoutElemId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, "Roscosun 1/4 CTO", appMap["Roscosun 1/4 CTO"].on)
+    table.insert(createdMacros, macroId); macroId = macroId + 1
+    posX = posX + Config.CellWidth
+
+    Backend.CreateMacro(macroId, "ALL Blackout", "CP_ClickAll(99)")
+    layoutElemId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, "Blackout", appMap["Blackout"].on)
+    table.insert(createdMacros, macroId); macroId = macroId + 1
+
+    -- Zmienna do kontrolowania szerokości dolnych guzików systemowych
+    local ctrlW = 160 
+
+    -- UI: FADE & DELAY 
+    currentY = currentY - Config.CellHeight - 50
+    posX = Config.StartX
+    
+    for i, tVal in ipairs(Config.TimeOptions) do
+        local labelStr = (tVal == "User") and "Fade U" or "Fade "..tVal.."s"
+        Backend.CreateMacro(macroId, labelStr, "CP_SetFade([["..tVal.."]])")
+        local assignedId
+        layoutElemId, assignedId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, labelStr, "App_Btn_Inactive", ctrlW)
+        _G.CP_Data.Config.FadeBtnIds[tVal] = assignedId
+        table.insert(createdMacros, macroId); macroId = macroId + 1
+        posX = posX + ctrlW
+    end
+
+    posX = posX + 100 -- Przerwa wizualna
+
+    for i, tVal in ipairs(Config.TimeOptions) do
+        local labelStr = (tVal == "User") and "Delay U" or "Delay "..tVal.."s"
+        Backend.CreateMacro(macroId, labelStr, "CP_SetDelay([["..tVal.."]])")
+        local assignedId
+        layoutElemId, assignedId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, labelStr, "App_Btn_Inactive", ctrlW)
+        _G.CP_Data.Config.DelayBtnIds[tVal] = assignedId
+        table.insert(createdMacros, macroId); macroId = macroId + 1
+        posX = posX + ctrlW
+    end
+
+    -- UI: DIR & WINGS X / Y 
+    currentY = currentY - Config.CellHeight - 50
+    posX = Config.StartX
+    
+    local dirsX = { {name="FLAT", m=0}, {name=">>", m=1}, {name="<<", m=2} }
+    for i, d in ipairs(dirsX) do
+        Backend.CreateMacro(macroId, "DirX_"..d.name, "CP_SetDirection([[X]], "..d.m..")")
+        local assignedId
+        layoutElemId, assignedId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, "X "..d.name, "App_Btn_Inactive", ctrlW)
+        _G.CP_Data.Config.MatricksBtnIds["X_"..d.m] = assignedId
+        table.insert(createdMacros, macroId); macroId = macroId + 1
+        posX = posX + ctrlW
+    end
+    
+    for i, wVal in ipairs(Config.WingsOptions) do
+        Backend.CreateMacro(macroId, "WingsX_"..wVal, "CP_SetWings([[X]], [["..wVal.."]])")
+        local labelStr = (wVal == "User") and "X Wing U" or "X Wing "..wVal
+        local assignedId
+        layoutElemId, assignedId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, labelStr, "App_Btn_Inactive", ctrlW)
+        _G.CP_Data.Config.WingsBtnIds.X[wVal] = assignedId
+        table.insert(createdMacros, macroId); macroId = macroId + 1
+        posX = posX + ctrlW
+    end
+
+    posX = posX + 100 -- Przerwa wizualna
+
+    local dirsY = { {name="FLAT", m=0}, {name="DOWN", m=1}, {name="UP", m=2} }
+    for i, d in ipairs(dirsY) do
+        Backend.CreateMacro(macroId, "DirY_"..d.name, "CP_SetDirection([[Y]], "..d.m..")")
+        local assignedId
+        layoutElemId, assignedId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, "Y "..d.name, "App_Btn_Inactive", ctrlW)
+        _G.CP_Data.Config.MatricksBtnIds["Y_"..d.m] = assignedId
+        table.insert(createdMacros, macroId); macroId = macroId + 1
+        posX = posX + ctrlW
+    end
+
+    for i, wVal in ipairs(Config.WingsOptions) do
+        Backend.CreateMacro(macroId, "WingsY_"..wVal, "CP_SetWings([[Y]], [["..wVal.."]])")
+        local labelStr = (wVal == "User") and "Y Wing U" or "Y Wing "..wVal
+        local assignedId
+        layoutElemId, assignedId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, labelStr, "App_Btn_Inactive", ctrlW)
+        _G.CP_Data.Config.WingsBtnIds.Y[wVal] = assignedId
+        table.insert(createdMacros, macroId); macroId = macroId + 1
+        posX = posX + ctrlW
+    end
+
+    -- UI: SYSTEM CONTROLS & BANKS
+    currentY = currentY - Config.CellHeight - 50
+    posX = Config.StartX
+    
+    -- Lewy blok: Freeze / Cancel / Off All (Idealnie pod Fade / Dir X)
+    Backend.CreateMacro(macroId, "FREEZE / COMMIT", "CP_ToggleFreeze()")
+    layoutElemId, _G.CP_Data.Config.FreezeLayoutId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, "FREEZE", "App_Freeze_Inactive", ctrlW)
+    table.insert(createdMacros, macroId); macroId = macroId + 1
+    posX = posX + ctrlW
+
+    Backend.CreateMacro(macroId, "CANCEL", "CP_Cancel()")
+    layoutElemId, _G.CP_Data.Config.CancelLayoutId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, "CANCEL", "App_Cancel_Inactive", ctrlW)
+    table.insert(createdMacros, macroId); macroId = macroId + 1
+    posX = posX + ctrlW
+
+    Backend.CreateMacro(macroId, "OFF ALL", "CP_OffAll()")
+    layoutElemId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, "OFF ALL", "App_Btn_Inactive", ctrlW)
+    table.insert(createdMacros, macroId); macroId = macroId + 1
+    
+    -- Prawy blok: Record i 5 Banków (Zaczyna się idealnie pod Delay / Dir Y)
+    posX = Config.StartX + (6 * ctrlW) + 100 
+
+    Backend.CreateMacro(macroId, "RECORD PALETTE", "CP_ToggleRecord()")
+    layoutElemId, _G.CP_Data.Config.RecordLayoutId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, "RECORD", "App_Btn_Inactive", ctrlW)
+    table.insert(createdMacros, macroId); macroId = macroId + 1
+    posX = posX + ctrlW 
+
+    for i = 1, 5 do
+        Backend.CreateMacro(macroId, "BANK "..i, "CP_PaletteClick("..i..")")
+        local assignedId
+        layoutElemId, assignedId = Frontend.AppendToLayout(layoutElemId, "Macro", macroId, posX, currentY, "BANK "..i, "App_Btn_Inactive", ctrlW)
+        _G.CP_Data.Config.PaletteBtnIds[i] = assignedId
+        table.insert(createdMacros, macroId); macroId = macroId + 1
+        posX = posX + ctrlW
+    end
+
+    Backend.CreateCleanupMacro(createdSeqIds, createdMacros)
+    Cmd('Blind Off'); _G.CP_UpdateUI(); Printf("System Color Matrix gotowy!")
+end
+
+return main

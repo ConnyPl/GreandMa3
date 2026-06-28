@@ -1,0 +1,262 @@
+_G.CP_Runtime = {}
+
+_G.CP_Runtime.InitGlobalState = function()
+    local Config = _G.CP_Config
+    _G.CP_Data = {
+        Frozen = false, RecordMode = false,
+        Groups = {}, GroupList = {},       
+        CurrentState = {}, PendingState = {}, 
+        Palettes = {}, 
+        SelectedFade = "0.5", SelectedDelay = "0",
+        FadeUserVal = "5", DelayUserVal = "5",
+        Matricks = { XMode = 0, YMode = 0, XWings = "None", YWings = "None", XUserVal = "2", YUserVal = "2" },
+        Config = {
+            LayoutId = Config.LayoutId, FreezeLayoutId = 0,
+            CancelLayoutId = 0, RecordLayoutId = 0,
+            FadeBtnIds = {}, DelayBtnIds = {}, MatricksBtnIds = {},
+            WingsBtnIds = {X = {}, Y = {}}, PaletteBtnIds = {}
+        }
+    }
+end
+
+local function ExecuteGroupChange(groupId, colorIdx)
+    local data = _G.CP_Data
+    local item = data.Groups[groupId][colorIdx]
+    if not item then return end
+    
+    if groupId >= 9950 then
+        -- OBSŁUGA FX: Kopiowanie zdefiniowanych presetów
+        local targetPreset
+        for _, fx in ipairs(_G.CP_Config.FXRows) do
+            if fx.Id == groupId then targetPreset = fx.TargetPreset; break end
+        end
+        if targetPreset then
+            Cmd(string.format('Copy Preset 4.%d At Preset 4.%d /o /nc', item.SourcePreset, targetPreset))
+        end
+    else
+        -- OBSŁUGA GRUP: Zwykłe przełączanie Cue
+        Cmd(string.format('Cook Sequence %d Cue %d /Merge', item.SeqId, item.CueId))
+        Cmd(string.format('Goto Sequence %d Cue %d', item.SeqId, item.CueId))
+    end
+end
+
+local function RefreshLayoutRow(groupId)
+    local data = _G.CP_Data
+    local row = data.Groups[groupId]
+    if not row then return end
+    local activeIndex = data.Frozen and data.PendingState[groupId] or data.CurrentState[groupId]
+    local layoutId = data.Config.LayoutId
+    for colIdx, item in pairs(row) do
+        local appName = (colIdx == activeIndex) and item.AppOn or item.AppOff
+        Cmd('Set Layout '..layoutId..'.'..item.LayoutId..' Property "Appearance" "'..appName..'"')
+    end
+end
+
+_G.CP_UpdateUI = function()
+    local data = _G.CP_Data
+    local Config = _G.CP_Config
+    if not data then return end
+    local layoutId = data.Config.LayoutId
+
+    -- Fade & Delay
+    for _, tVal in ipairs(Config.TimeOptions) do
+        local fId = data.Config.FadeBtnIds[tVal]
+        if fId then Cmd('Set Layout '..layoutId..'.'..fId..' Property "Appearance" "'..(data.SelectedFade == tVal and "App_Btn_Active" or "App_Btn_Inactive")..'"') end
+        local dId = data.Config.DelayBtnIds[tVal]
+        if dId then Cmd('Set Layout '..layoutId..'.'..dId..' Property "Appearance" "'..(data.SelectedDelay == tVal and "App_Btn_Active" or "App_Btn_Inactive")..'"') end
+    end
+    
+    -- Directions & Wings
+    for i = 0, 2 do
+        if data.Config.MatricksBtnIds["X_"..i] then Cmd('Set Layout '..layoutId..'.'..data.Config.MatricksBtnIds["X_"..i]..' Property "Appearance" "'..(data.Matricks.XMode == i and "App_Btn_Active" or "App_Btn_Inactive")..'"') end
+        if data.Config.MatricksBtnIds["Y_"..i] then Cmd('Set Layout '..layoutId..'.'..data.Config.MatricksBtnIds["Y_"..i]..' Property "Appearance" "'..(data.Matricks.YMode == i and "App_Btn_Active" or "App_Btn_Inactive")..'"') end
+    end
+    for _, wVal in ipairs(Config.WingsOptions) do
+        if data.Config.WingsBtnIds.X[wVal] then Cmd('Set Layout '..layoutId..'.'..data.Config.WingsBtnIds.X[wVal]..' Property "Appearance" "'..(data.Matricks.XWings == wVal and "App_Btn_Active" or "App_Btn_Inactive")..'"') end
+        if data.Config.WingsBtnIds.Y[wVal] then Cmd('Set Layout '..layoutId..'.'..data.Config.WingsBtnIds.Y[wVal]..' Property "Appearance" "'..(data.Matricks.YWings == wVal and "App_Btn_Active" or "App_Btn_Inactive")..'"') end
+    end
+
+    -- System Controls
+    local fId, cId, rId = data.Config.FreezeLayoutId, data.Config.CancelLayoutId, data.Config.RecordLayoutId
+    if fId > 0 then Cmd('Set Layout '..layoutId..'.'..fId..' Property "Appearance" "'..(data.Frozen and "App_Freeze_Active" or "App_Freeze_Inactive")..'"') end
+    if cId > 0 then Cmd('Set Layout '..layoutId..'.'..cId..' Property "Appearance" "'..(data.Frozen and "App_Cancel_Active" or "App_Cancel_Inactive")..'"') end
+    if rId > 0 then Cmd('Set Layout '..layoutId..'.'..rId..' Property "Appearance" "'..(data.RecordMode and "App_Cancel_Active" or "App_Btn_Inactive")..'"') end
+end
+
+-- ==========================================
+-- CZAS I KIERUNKI
+-- ==========================================
+_G.CP_SetFade = function(modeStr)
+    local data = _G.CP_Data
+    local val = modeStr
+    local layoutId = data.Config.LayoutId
+    local btnId = data.Config.FadeBtnIds["User"]
+
+    if modeStr == "User" then
+        local inputVal = TextInput("Podaj czas Fade:", data.FadeUserVal)
+        if not inputVal then return end
+        data.FadeUserVal = inputVal
+        val = inputVal
+        Cmd('Set Layout '..layoutId..'.'..btnId..' Property "Name" "U: '..inputVal..'s"')
+    else
+        if btnId then Cmd('Set Layout '..layoutId..'.'..btnId..' Property "Name" "Fade U"') end
+    end
+
+    data.SelectedFade = modeStr
+    local mId = _G.CP_Config.BaseMatricksId
+    Cmd(string.format('Set MAtricks %d Property "FadeFromX" "%s" "FadeToX" "None" "FadeFromY" "None" "FadeToY" "None"', mId, val))
+    _G.CP_UpdateUI()
+end
+
+_G.CP_SetDelay = function(modeStr)
+    local data = _G.CP_Data
+    local val = modeStr
+    local layoutId = data.Config.LayoutId
+    local btnId = data.Config.DelayBtnIds["User"]
+
+    if modeStr == "User" then
+        local inputVal = TextInput("Podaj czas Delay:", data.DelayUserVal)
+        if not inputVal then return end
+        data.DelayUserVal = inputVal
+        val = inputVal
+        Cmd('Set Layout '..layoutId..'.'..btnId..' Property "Name" "U: '..inputVal..'s"')
+    else
+        if btnId then Cmd('Set Layout '..layoutId..'.'..btnId..' Property "Name" "Delay U"') end
+    end
+
+    data.SelectedDelay = modeStr
+    _G.CP_SetDirection("X", data.Matricks.XMode)
+    _G.CP_SetDirection("Y", data.Matricks.YMode)
+    _G.CP_UpdateUI()
+end
+
+_G.CP_SetDirection = function(axis, mode)
+    _G.CP_Data.Matricks[axis.."Mode"] = mode
+    
+    local selDelay = _G.CP_Data.SelectedDelay
+    local d = (selDelay == "User") and _G.CP_Data.DelayUserVal or selDelay
+    local mId = _G.CP_Config.BaseMatricksId
+    local dFrom, dTo = "0", "0"
+    
+    if mode == 1 then dFrom, dTo = "0", d      -- >> / DOWN
+    elseif mode == 2 then dFrom, dTo = d, "0"  -- << / UP
+    end
+    
+    Cmd(string.format('Set MAtricks %d Property "DelayFrom%s" "%s" "DelayTo%s" "%s"', mId, axis, dFrom, axis, dTo))
+    _G.CP_UpdateUI()
+end
+
+_G.CP_SetWings = function(axis, modeStr)
+    local data = _G.CP_Data
+    local mId = _G.CP_Config.BaseMatricksId
+    local applyVal = modeStr
+    local layoutId = data.Config.LayoutId
+    local btnId = data.Config.WingsBtnIds[axis]["User"]
+
+    if modeStr == "User" then
+        local inputVal = TextInput("Podaj ilosc Wings dla osi " .. axis .. ":", data.Matricks[axis.."UserVal"])
+        if not inputVal then return end
+        data.Matricks[axis.."UserVal"] = inputVal
+        applyVal = inputVal
+        Cmd('Set Layout '..layoutId..'.'..btnId..' Property "Name" "User: '..inputVal..'"')
+    else
+        Cmd('Set Layout '..layoutId..'.'..btnId..' Property "Name" "'..axis..' Wing U"')
+    end
+
+    data.Matricks[axis.."Wings"] = modeStr
+    Cmd(string.format('Set MAtricks %d Property "%sWings" "%s"', mId, axis, applyVal))
+    _G.CP_UpdateUI()
+end
+
+_G.CP_Click = function(groupId, colorIdx)
+    local data = _G.CP_Data
+    if data.Frozen then data.PendingState[groupId] = colorIdx
+    else
+        data.CurrentState[groupId] = colorIdx
+        data.PendingState[groupId] = nil 
+        ExecuteGroupChange(groupId, colorIdx)
+    end
+    RefreshLayoutRow(groupId)
+end
+
+_G.CP_ClickAll = function(colorIdx)
+    local data = _G.CP_Data
+    for _, gId in ipairs(data.GroupList) do
+        if data.Frozen then data.PendingState[gId] = colorIdx
+        else
+            data.CurrentState[gId] = colorIdx
+            data.PendingState[gId] = nil
+            ExecuteGroupChange(gId, colorIdx)
+        end
+        RefreshLayoutRow(gId)
+    end
+end
+
+-- ==========================================
+-- KONTROLA SYSTEMU I PALETY
+-- ==========================================
+_G.CP_ToggleFreeze = function()
+    local data = _G.CP_Data
+    if data.Frozen then
+        for _, gId in ipairs(data.GroupList) do
+            local pendingCol = data.PendingState[gId]
+            if pendingCol then
+                data.CurrentState[gId] = pendingCol
+                ExecuteGroupChange(gId, pendingCol) 
+            end
+        end
+        data.PendingState = {}
+        data.Frozen = false
+    else
+        data.Frozen = true
+    end
+    _G.CP_UpdateUI()
+end
+
+_G.CP_Cancel = function()
+    local data = _G.CP_Data
+    data.PendingState = {}
+    data.Frozen = false
+    for _, gId in ipairs(data.GroupList) do RefreshLayoutRow(gId) end
+    _G.CP_UpdateUI()
+end
+
+_G.CP_OffAll = function()
+    local data = _G.CP_Data
+    for _, gId in ipairs(data.GroupList) do
+        local firstItem = data.Groups[gId]
+        if firstItem and next(firstItem) then 
+            local fItem = firstItem[next(firstItem)]
+            -- Ochrona: wyłączamy tylko jeśli wiersz korzysta z Sequence ID (np. standardowe Grupy)
+            if fItem.SeqId then
+                Cmd('Off Sequence '..fItem.SeqId) 
+            end
+        end
+    end
+    data.CurrentState = {}; data.PendingState = {}
+    for _, gId in ipairs(data.GroupList) do RefreshLayoutRow(gId) end
+end
+
+_G.CP_ToggleRecord = function()
+    _G.CP_Data.RecordMode = not _G.CP_Data.RecordMode
+    _G.CP_UpdateUI()
+end
+
+_G.CP_PaletteClick = function(idx)
+    local data = _G.CP_Data
+    if data.RecordMode then
+        data.Palettes[idx] = {}
+        for gId, colorIdx in pairs(data.CurrentState) do data.Palettes[idx][gId] = colorIdx end
+        data.RecordMode = false
+        _G.CP_UpdateUI()
+        Cmd('Set Layout '..data.Config.LayoutId..'.'..data.Config.PaletteBtnIds[idx]..' Property "Appearance" "App_Btn_Active"')
+    else
+        local pal = data.Palettes[idx]
+        if not pal or not next(pal) then return end
+        for gId, colorIdx in pairs(pal) do
+            if data.Frozen then data.PendingState[gId] = colorIdx
+            else data.CurrentState[gId] = colorIdx; ExecuteGroupChange(gId, colorIdx) end
+            RefreshLayoutRow(gId)
+        end
+    end
+end
